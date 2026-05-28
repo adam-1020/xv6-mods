@@ -91,7 +91,7 @@ printf(1, "Number of used physical pages: %d\n", used_physical);
 ## How to apply
 
 ```bash
-cd xv6
+cd xv6-public
 git apply syscalls.patch
 make
 ```
@@ -111,4 +111,4 @@ Number of used physical pages: 4
 
 ## Screenshot
 
-<!-- TODO ss -->
+<img width="1544" height="1030" alt="Screenshot From 2026-05-28 12-48-46" src="https://github.com/user-attachments/assets/46262232-f40f-4287-86e0-1a58afb55f33" />
