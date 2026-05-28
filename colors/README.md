@@ -55,9 +55,10 @@ Demo program — prints `"Hello, World"` 16 times, once in each CGA color (color
 ## How to apply
 
 ```bash
-cd xv6
+cd xv6-public
 git apply colors.patch
-make
+make clean
+make qemu
 ```
 
 ## How to test
@@ -80,4 +81,4 @@ write(1, "%7Back to grey\n", 14);
 
 ## Screenshot
 
-<!-- TODO screenshot -->
+<img width="1544" height="1030" alt="Screenshot From 2026-05-28 11-41-12" src="https://github.com/user-attachments/assets/fdc5f0a9-4ed0-49e3-a1e0-400932bdd32c" />
