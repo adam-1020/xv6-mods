@@ -40,10 +40,12 @@ Same issue when linking user-space programs against `ulib.o`.
 
 None — this patch is included as part of all subsequent patches.
 
-## How to apply
+## How to download, apply and start
 
 ```bash
-cd xv6
-git apply xv6.patch
-make
+git clone https://github.com/mit-pdos/xv6-public.git
+cd xv6_public
+patch -p1 -i xv6.patch
+make clean
+make qemu
 ```
