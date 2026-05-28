@@ -143,7 +143,7 @@ The child reads `1234` — written by the parent — directly from the shared ph
 ## How to apply
 
 ```bash
-cd xv6
+cd xv6-public
 git apply shm.patch
 make
 ```
@@ -159,4 +159,4 @@ child: 1234
 
 ## Screenshot
 
-<!-- TODO screenshot -->
+<img width="1544" height="1030" alt="Screenshot From 2026-05-28 13-21-05" src="https://github.com/user-attachments/assets/a3ddf41e-ad5b-4dc8-a3b6-7f0e732ac8de" />
