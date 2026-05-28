@@ -1,0 +1,155 @@
+From 63f8012fca1bf04c87e8727ff123760ad2ed4b1b Mon Sep 17 00:00:00 2001
+From: adam-1020 <184023411+adam-1020@users.noreply.github.com>
+Date: Thu, 28 May 2026 11:43:37 +0200
+Subject: [PATCH] vmprint
+
+---
+ Makefile |  5 ++++-
+ defs.h   |  2 ++
+ exec.c   |  4 ++++
+ proc.c   |  3 +++
+ testvm.c | 18 ++++++++++++++++++
+ vm.c     | 22 ++++++++++++++++++++++
+ 6 files changed, 53 insertions(+), 1 deletion(-)
+ create mode 100644 testvm.c
+
+diff --git a/Makefile b/Makefile
+index 09d790c..68b494a 100644
+--- a/Makefile
++++ b/Makefile
+@@ -76,7 +76,7 @@ AS = $(TOOLPREFIX)gas
+ LD = $(TOOLPREFIX)ld
+ OBJCOPY = $(TOOLPREFIX)objcopy
+ OBJDUMP = $(TOOLPREFIX)objdump
+-CFLAGS = -fno-pic -static -fno-builtin -fno-strict-aliasing -O2 -Wall -MD -ggdb -m32 -Werror -fno-omit-frame-pointer
++CFLAGS = -fno-pic -static -fno-builtin -fno-strict-aliasing -O2 -Wall -MD -mno-sse -ggdb -m32 -fno-omit-frame-pointer
+ CFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1 && echo -fno-stack-protector)
+ ASFLAGS = -m32 -gdwarf-2 -Wa,-divide
+ # FreeBSD ld wants ``elf_i386_fbsd''
+@@ -116,6 +116,7 @@ entryother: entryother.S
+ 
+ initcode: initcode.S
+ 	$(CC) $(CFLAGS) -nostdinc -I. -c initcode.S
++	$(OBJCOPY) --remove-section .note.gnu.property initcode.o
+ 	$(LD) $(LDFLAGS) -N -e start -Ttext 0 -o initcode.out initcode.o
+ 	$(OBJCOPY) -S -O binary initcode.out initcode
+ 	$(OBJDUMP) -S initcode.o > initcode.asm
+@@ -146,6 +147,7 @@ vectors.S: vectors.pl
+ ULIB = ulib.o usys.o printf.o umalloc.o
+ 
+ _%: %.o $(ULIB)
++	$(OBJCOPY) --remove-section .note.gnu.property ulib.o
+ 	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+ 	$(OBJDUMP) -S $@ > $*.asm
+ 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $*.sym
+@@ -181,6 +183,7 @@ UPROGS=\
+ 	_usertests\
+ 	_wc\
+ 	_zombie\
++	_testvm\
+ 
+ fs.img: mkfs README $(UPROGS)
+ 	./mkfs fs.img README $(UPROGS)
+diff --git a/defs.h b/defs.h
+index 82fb982..4b64bb5 100644
+--- a/defs.h
++++ b/defs.h
+@@ -10,6 +10,8 @@ struct sleeplock;
+ struct stat;
+ struct superblock;
+ 
++void vmprint(pde_t *pgdir);
++
+ // bio.c
+ void            binit(void);
+ struct buf*     bread(uint, uint);
+diff --git a/exec.c b/exec.c
+index b40134f..6b27072 100644
+--- a/exec.c
++++ b/exec.c
+@@ -99,6 +99,10 @@ exec(char *path, char **argv)
+   curproc->sz = sz;
+   curproc->tf->eip = elf.entry;  // main
+   curproc->tf->esp = sp;
++  
++  cprintf("exec - ");
++  vmprint(curproc->pgdir);
++  
+   switchuvm(curproc);
+   freevm(oldpgdir);
+   return 0;
+diff --git a/proc.c b/proc.c
+index 806b1b1..eefb8d7 100644
+--- a/proc.c
++++ b/proc.c
+@@ -261,6 +261,9 @@ exit(void)
+     }
+   }
+ 
++  cprintf("exit - ");
++  vmprint(curproc->pgdir);
++
+   // Jump into the scheduler, never to return.
+   curproc->state = ZOMBIE;
+   sched();
+diff --git a/testvm.c b/testvm.c
+new file mode 100644
+index 0000000..9948d71
+--- /dev/null
++++ b/testvm.c
+@@ -0,0 +1,18 @@
++#include "types.h"
++#include "stat.h"
++#include "user.h"
++
++int
++main(int argc, char *argv[])
++{
++    char *p;
++    int i;
++    for(i = 0; i < 5; i++){
++        p = sbrk(4096);
++        if(p == (char*)-1){
++            printf(1, "sbrk failed\n");
++            exit();
++        }
++    }
++    exit();
++}
+\ No newline at end of file
+diff --git a/vm.c b/vm.c
+index 7134cff..6637536 100644
+--- a/vm.c
++++ b/vm.c
+@@ -10,6 +10,28 @@
+ extern char data[];  // defined by kernel.ld
+ pde_t *kpgdir;  // for use in scheduler()
+ 
++void
++vmprint(pde_t *pgdir) 
++{
++  cprintf("pgdir pa 0x%x\n", V2P(pgdir));
++
++  for(int i = 0; i < 512; i++) {
++    pde_t pde = pgdir[i];
++    if(pde & PTE_P) {
++      pte_t *pt = (pte_t*)P2V(PTE_ADDR(pde));
++      cprintf(".. %d: pde pa 0x%x flags 0x%x\n", i, V2P(pt), pde & 0xFFF);
++
++      for(int j = 0; j < 1024; j++) {
++        pte_t pte = pt[j];
++        if(pte & PTE_P) {
++          uint va = i * 1024 * PGSIZE + j * PGSIZE;
++          cprintf(".. .. %d: pte pa 0x%x va 0x%x flags 0x%x\n", j, PTE_ADDR(pte), va, pte & 0xFFF);
++        }
++      }
++    }
++  }
++}
++
+ // Set up CPU's kernel segment descriptors.
+ // Run once on entry on each CPU.
+ void
+-- 
+2.43.0
+

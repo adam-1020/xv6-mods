@@ -1,0 +1,216 @@
+From 63f8012fca1bf04c87e8727ff123760ad2ed4b1b Mon Sep 17 00:00:00 2001
+From: adam-1020 <184023411+adam-1020@users.noreply.github.com>
+Date: Thu, 28 May 2026 11:40:37 +0200
+Subject: [PATCH] colors
+
+---
+ Makefile  |  5 ++++-
+ console.c | 63 +++++++++++++++++++++++++++++++++++++++++++++++++------
+ hello.c   | 39 ++++++++++++++++++++++++++++++++++
+ 3 files changed, 100 insertions(+), 7 deletions(-)
+ create mode 100644 hello.c
+
+diff --git a/Makefile b/Makefile
+index 09d790c..ffa90ff 100644
+--- a/Makefile
++++ b/Makefile
+@@ -76,7 +76,7 @@ AS = $(TOOLPREFIX)gas
+ LD = $(TOOLPREFIX)ld
+ OBJCOPY = $(TOOLPREFIX)objcopy
+ OBJDUMP = $(TOOLPREFIX)objdump
+-CFLAGS = -fno-pic -static -fno-builtin -fno-strict-aliasing -O2 -Wall -MD -ggdb -m32 -Werror -fno-omit-frame-pointer
++CFLAGS = -fno-pic -static -fno-builtin -fno-strict-aliasing -O2 -Wall -MD -mno-sse -ggdb -m32 -fno-omit-frame-pointer
+ CFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1 && echo -fno-stack-protector)
+ ASFLAGS = -m32 -gdwarf-2 -Wa,-divide
+ # FreeBSD ld wants ``elf_i386_fbsd''
+@@ -116,6 +116,7 @@ entryother: entryother.S
+ 
+ initcode: initcode.S
+ 	$(CC) $(CFLAGS) -nostdinc -I. -c initcode.S
++	$(OBJCOPY) --remove-section .note.gnu.property initcode.o
+ 	$(LD) $(LDFLAGS) -N -e start -Ttext 0 -o initcode.out initcode.o
+ 	$(OBJCOPY) -S -O binary initcode.out initcode
+ 	$(OBJDUMP) -S initcode.o > initcode.asm
+@@ -146,6 +147,7 @@ vectors.S: vectors.pl
+ ULIB = ulib.o usys.o printf.o umalloc.o
+ 
+ _%: %.o $(ULIB)
++	$(OBJCOPY) --remove-section .note.gnu.property ulib.o
+ 	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+ 	$(OBJDUMP) -S $@ > $*.asm
+ 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $*.sym
+@@ -181,6 +183,7 @@ UPROGS=\
+ 	_usertests\
+ 	_wc\
+ 	_zombie\
++	_hello\
+ 
+ fs.img: mkfs README $(UPROGS)
+ 	./mkfs fs.img README $(UPROGS)
+diff --git a/console.c b/console.c
+index a280d2b..1435e66 100644
+--- a/console.c
++++ b/console.c
+@@ -51,6 +51,7 @@ printint(int xx, int base, int sign)
+ //PAGEBREAK: 50
+ 
+ // Print to the console. only understands %d, %x, %p, %s.
++// preserve original '%' behavior
+ void
+ cprintf(char *fmt, ...)
+ {
+@@ -128,6 +129,28 @@ panic(char *s)
+ #define CRTPORT 0x3d4
+ static ushort *crt = (ushort*)P2V(0xb8000);  // CGA memory
+ 
++//!!
++// current attribute (0x0f -> foreground color 15, background 0)
++static uchar cons_attr = 0x07; // default: light grey on black
++
++//!!
++// helper: set attribute by color index 0..15 (foreground only)
++static void
++set_cons_color(int idx)
++{
++  cons_attr = (uchar)(idx & 0x0f); // mask: only lowest 4 bits are used
++}
++
++//!!
++static int
++hexchar_to_index(int c)
++{
++  if(c >= '0' && c <= '9') return c - '0';
++  if(c >= 'a' && c <= 'f') return 10 + c - 'a';
++  if(c >= 'A' && c <= 'F') return 10 + c - 'A';
++  return -1;
++}
++
+ static void
+ cgaputc(int c)
+ {
+@@ -144,8 +167,7 @@ cgaputc(int c)
+   else if(c == BACKSPACE){
+     if(pos > 0) --pos;
+   } else
+-    crt[pos++] = (c&0xff) | 0x0700;  // black on white
+-
++    crt[pos++] = (c&0xff) | (cons_attr << 8);  // use current attribute !!! most important change
+   if(pos < 0 || pos > 25*80)
+     panic("pos under/overflow");
+ 
+@@ -159,18 +181,48 @@ cgaputc(int c)
+   outb(CRTPORT+1, pos>>8);
+   outb(CRTPORT, 15);
+   outb(CRTPORT+1, pos);
+-  crt[pos] = ' ' | 0x0700;
++  crt[pos] = ' ' | (cons_attr << 8); // !!!
+ }
+ 
+ void
+ consputc(int c)
+ {
++  //!!!
++  // format '%' + (0..9,a..f)
++  // works on write() because it processes raw chars
++  // after '%' consputc waits for a color code (flag set)
++  static int pending_pct = 0;
++
+   if(panicked){
+     cli();
+     for(;;)
+       ;
+   }
+ 
++  if(pending_pct){
++    // handle color code
++    // !!!
++    int idx = hexchar_to_index(c);
++    if(idx >= 0){
++      set_cons_color(idx);
++      // consume % and number without printing
++      pending_pct = 0;
++      return;
++    } else {
++      // not a color code
++      uartputc('%'); cgaputc('%');
++      pending_pct = 0;
++      // continue normal printing
++    }
++  }
++  
++  // !!!
++  if(c == '%'){
++    // start color escape sequence; wait for next char
++    pending_pct = 1;
++    return;
++  }
++
+   if(c == BACKSPACE){
+     uartputc('\b'); uartputc(' '); uartputc('\b');
+   } else
+@@ -228,7 +280,7 @@ consoleintr(int (*getc)(void))
+   }
+   release(&cons.lock);
+   if(doprocdump) {
+-    procdump();  // now call procdump() wo. cons.lock held
++    procdump();  // now call procdump() without cons.lock held
+   }
+ }
+ 
+@@ -295,5 +347,4 @@ consoleinit(void)
+   cons.locking = 1;
+ 
+   ioapicenable(IRQ_KBD, 0);
+-}
+-
++}
+\ No newline at end of file
+diff --git a/hello.c b/hello.c
+new file mode 100644
+index 0000000..a18cd54
+--- /dev/null
++++ b/hello.c
+@@ -0,0 +1,39 @@
++#include "types.h"
++#include "stat.h"
++#include "user.h"
++
++int
++main(int argc, char *argv[])
++{
++  char *msg = "Hello, World\n";
++  char buf[64]; // buffer
++  int i, len;
++
++  // calculate msg length
++  for(len = 0; msg[len]; len++)
++    ;
++
++  for(i = 0; i < 16; i++){
++    char code;
++
++    if(i < 10)
++      code = '0' + i; // generate "0", "1", etc.
++    else
++      code = 'a' + (i - 10); // generate "a", "b", etc.
++
++    buf[0] = '%';     // our escape sequence
++    buf[1] = code;    // color code
++
++    // copy msg into buf+2
++    {
++      int j;
++      for(j = 0; j < len; j++)
++        buf[2 + j] = msg[j];
++    }
++
++    // fd, data buffer, number of bytes to print
++    write(1, buf, 2 + len);
++  }
++
++  exit();
++}
+\ No newline at end of file
+-- 
+2.53.0
+

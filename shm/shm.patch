@@ -1,0 +1,298 @@
+From e6928ba1eb0cff23ac80100057afc7df60292224 Mon Sep 17 00:00:00 2001
+From: adam-1020 <184023411+adam-1020@users.noreply.github.com>
+Date: Thu, 28 May 2026 13:19:26 +0200
+Subject: [PATCH] shm
+
+---
+ Makefile  |  5 +++-
+ defs.h    |  1 +
+ main.c    |  1 +
+ mmu.h     |  3 +++
+ syscall.c |  2 ++
+ syscall.h |  1 +
+ sysproc.c |  5 ++++
+ test.c    | 23 +++++++++++++++++++
+ user.h    |  6 +++++
+ usys.S    |  1 +
+ vm.c      | 69 +++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 11 files changed, 116 insertions(+), 1 deletion(-)
+ create mode 100644 test.c
+
+diff --git a/Makefile b/Makefile
+index 09d790c..4e0578e 100644
+--- a/Makefile
++++ b/Makefile
+@@ -76,7 +76,7 @@ AS = $(TOOLPREFIX)gas
+ LD = $(TOOLPREFIX)ld
+ OBJCOPY = $(TOOLPREFIX)objcopy
+ OBJDUMP = $(TOOLPREFIX)objdump
+-CFLAGS = -fno-pic -static -fno-builtin -fno-strict-aliasing -O2 -Wall -MD -ggdb -m32 -Werror -fno-omit-frame-pointer
++CFLAGS = -fno-pic -static -fno-builtin -fno-strict-aliasing -O2 -Wall -MD -mno-sse -ggdb -m32 -fno-omit-frame-pointer
+ CFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1 && echo -fno-stack-protector)
+ ASFLAGS = -m32 -gdwarf-2 -Wa,-divide
+ # FreeBSD ld wants ``elf_i386_fbsd''
+@@ -116,6 +116,7 @@ entryother: entryother.S
+ 
+ initcode: initcode.S
+ 	$(CC) $(CFLAGS) -nostdinc -I. -c initcode.S
++	$(OBJCOPY) --remove-section .note.gnu.property initcode.o
+ 	$(LD) $(LDFLAGS) -N -e start -Ttext 0 -o initcode.out initcode.o
+ 	$(OBJCOPY) -S -O binary initcode.out initcode
+ 	$(OBJDUMP) -S initcode.o > initcode.asm
+@@ -146,6 +147,7 @@ vectors.S: vectors.pl
+ ULIB = ulib.o usys.o printf.o umalloc.o
+ 
+ _%: %.o $(ULIB)
++	$(OBJCOPY) --remove-section .note.gnu.property ulib.o
+ 	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
+ 	$(OBJDUMP) -S $@ > $*.asm
+ 	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $*.sym
+@@ -181,6 +183,7 @@ UPROGS=\
+ 	_usertests\
+ 	_wc\
+ 	_zombie\
++	_test\
+ 
+ fs.img: mkfs README $(UPROGS)
+ 	./mkfs fs.img README $(UPROGS)
+diff --git a/defs.h b/defs.h
+index 82fb982..617e199 100644
+--- a/defs.h
++++ b/defs.h
+@@ -185,6 +185,7 @@ void            switchuvm(struct proc*);
+ void            switchkvm(void);
+ int             copyout(pde_t*, uint, void*, uint);
+ void            clearpteu(pde_t *pgdir, char *uva);
++void            shminit(void);
+ 
+ // number of elements in fixed-size array
+ #define NELEM(x) (sizeof(x)/sizeof((x)[0]))
+diff --git a/main.c b/main.c
+index 9924e64..97664da 100644
+--- a/main.c
++++ b/main.c
+@@ -33,6 +33,7 @@ main(void)
+   ideinit();       // disk 
+   startothers();   // start other processors
+   kinit2(P2V(4*1024*1024), P2V(PHYSTOP)); // must come after startothers()
++  shminit();
+   userinit();      // first user process
+   mpmain();        // finish this processor's setup
+ }
+diff --git a/mmu.h b/mmu.h
+index a82d8e2..717892f 100644
+--- a/mmu.h
++++ b/mmu.h
+@@ -11,6 +11,9 @@
+ 
+ #define CR4_PSE         0x00000010      // Page size extension
+ 
++// shared memory
++#define SHMVA 0x40000000
++
+ // various segment selectors.
+ #define SEG_KCODE 1  // kernel code
+ #define SEG_KDATA 2  // kernel data+stack
+diff --git a/syscall.c b/syscall.c
+index ee85261..7631685 100644
+--- a/syscall.c
++++ b/syscall.c
+@@ -103,6 +103,7 @@ extern int sys_unlink(void);
+ extern int sys_wait(void);
+ extern int sys_write(void);
+ extern int sys_uptime(void);
++extern int sys_shmget(void);
+ 
+ static int (*syscalls[])(void) = {
+ [SYS_fork]    sys_fork,
+@@ -126,6 +127,7 @@ static int (*syscalls[])(void) = {
+ [SYS_link]    sys_link,
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
++[SYS_shmget]  sys_shmget,
+ };
+ 
+ void
+diff --git a/syscall.h b/syscall.h
+index bc5f356..2f36d70 100644
+--- a/syscall.h
++++ b/syscall.h
+@@ -20,3 +20,4 @@
+ #define SYS_link   19
+ #define SYS_mkdir  20
+ #define SYS_close  21
++#define SYS_shmget 22
+diff --git a/sysproc.c b/sysproc.c
+index 0686d29..ac52135 100644
+--- a/sysproc.c
++++ b/sysproc.c
+@@ -7,6 +7,11 @@
+ #include "mmu.h"
+ #include "proc.h"
+ 
++extern int shmget(void);
++int sys_shmget(void) {
++  return shmget();
++}
++
+ int
+ sys_fork(void)
+ {
+diff --git a/test.c b/test.c
+new file mode 100644
+index 0000000..196b73e
+--- /dev/null
++++ b/test.c
+@@ -0,0 +1,23 @@
++#include "types.h"
++#include "user.h"
++
++#define SHM_VA 0x40000000
++
++int
++main(void)
++{
++  shmget();
++
++  int *x = (int*)SHM_VA;
++
++  if (fork() == 0) {
++    shmget();
++    sleep(100);
++    printf(1,"child: %d\n", *x);
++  } else {
++    *x = 1234;
++    wait();
++  }
++
++  exit();
++}
+\ No newline at end of file
+diff --git a/user.h b/user.h
+index 4f99c52..214ae89 100644
+--- a/user.h
++++ b/user.h
+@@ -37,3 +37,9 @@ void* memset(void*, int, uint);
+ void* malloc(uint);
+ void free(void*);
+ int atoi(const char*);
++
++// mmu.h
++int sem_init(int id, int val);
++int sem_up(int id);
++int sem_down(int id);
++int shmget(void);
+\ No newline at end of file
+diff --git a/usys.S b/usys.S
+index 8bfd8a1..15bee23 100644
+--- a/usys.S
++++ b/usys.S
+@@ -29,3 +29,4 @@ SYSCALL(getpid)
+ SYSCALL(sbrk)
+ SYSCALL(sleep)
+ SYSCALL(uptime)
++SYSCALL(shmget)
+diff --git a/vm.c b/vm.c
+index 7134cff..072e5d5 100644
+--- a/vm.c
++++ b/vm.c
+@@ -6,6 +6,7 @@
+ #include "mmu.h"
+ #include "proc.h"
+ #include "elf.h"
++#include "spinlock.h"
+ 
+ extern char data[];  // defined by kernel.ld
+ pde_t *kpgdir;  // for use in scheduler()
+@@ -79,6 +80,48 @@ mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
+   return 0;
+ }
+ 
++// shared memory
++static char *shm_kaddr = 0;
++static int shm_refcount = 0;
++static struct spinlock shm_lock;
++
++void
++shminit(void)
++{
++  initlock(&shm_lock, "shm");
++}
++
++int
++shmget(void)
++{
++  struct proc *p = myproc();
++  pte_t *pte;
++
++  acquire(&shm_lock);
++  if(shm_kaddr == 0){
++    shm_kaddr = kalloc();
++    if(shm_kaddr == 0){
++      release(&shm_lock);
++      return -1;
++    }
++    memset(shm_kaddr, 0, PGSIZE); 
++  }
++  pte = walkpgdir(p->pgdir, (char*)SHMVA, 0);
++  if(pte && (*pte & PTE_P)){
++    release(&shm_lock);
++    return 0;
++  }
++
++  if(mappages(p->pgdir, (void*)SHMVA, PGSIZE, V2P(shm_kaddr), PTE_W|PTE_U) < 0){
++    release(&shm_lock); 
++    return -1;
++  }
++
++  shm_refcount++;
++  release(&shm_lock);
++  return 0;
++}
++
+ // There is one page table per process, plus one that's used when
+ // a CPU is not running any process (kpgdir). The kernel uses the
+ // current process's page table during system calls and interrupts;
+@@ -287,6 +330,20 @@ freevm(pde_t *pgdir)
+ 
+   if(pgdir == 0)
+     panic("freevm: no pgdir");
++
++  pte_t *pte;
++  pte = walkpgdir(pgdir, (char*)SHMVA, 0);
++  if(pte && (*pte & PTE_P)){
++    *pte = 0;
++    acquire(&shm_lock);
++    shm_refcount--;
++    if(shm_refcount == 0){
++      kfree(shm_kaddr);
++      shm_kaddr = 0;
++    }
++    release(&shm_lock);
++  }
++
+   deallocuvm(pgdir, KERNBASE, 0);
+   for(i = 0; i < NPDENTRIES; i++){
+     if(pgdir[i] & PTE_P){
+@@ -329,6 +386,18 @@ copyuvm(pde_t *pgdir, uint sz)
+       panic("copyuvm: page not present");
+     pa = PTE_ADDR(*pte);
+     flags = PTE_FLAGS(*pte);
++
++    if(i == SHMVA){
++      acquire(&shm_lock);
++      shm_refcount++;
++      release(&shm_lock); 
++      
++      if(mappages(d, (void*)SHMVA, PGSIZE, pa, flags) < 0)
++        goto bad;
++
++      continue;
++    }
++
+     if((mem = kalloc()) == 0)
+       goto bad;
+     memmove(mem, (char*)P2V(pa), PGSIZE);
+-- 
+2.53.0
+
