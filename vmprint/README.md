@@ -74,7 +74,7 @@ Allocates 5 pages (5 × 4 KB) via `sbrk(4096)` in a loop, then exits. Lets you v
 ## How to apply
 
 ```bash
-cd xv6
+cd xv6-public
 git apply vmprint.patch
 make
 ```
@@ -101,4 +101,4 @@ The PTE count at `exit` should be 5 higher than at `exec` (5 allocations × 1 pa
 
 ## Screenshot
 
-<!-- TODO ss -->
+<img width="1544" height="1030" alt="Screenshot From 2026-05-28 12-33-29" src="https://github.com/user-attachments/assets/c938b665-a705-43ed-9a6d-083994870eae" />
