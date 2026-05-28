@@ -113,7 +113,7 @@ Synchronization scheme:
 ## How to apply
 
 ```bash
-cd xv6
+cd xv6-public
 git apply semaphores.patch
 make
 ```
@@ -131,4 +131,4 @@ Both children have printed by now
 
 ## Screenshot
 
-<!-- TODO ss -->
+<img width="1544" height="1030" alt="Screenshot From 2026-05-28 13-06-35" src="https://github.com/user-attachments/assets/73254b51-fc93-427e-a06b-754497fb5d50" />
